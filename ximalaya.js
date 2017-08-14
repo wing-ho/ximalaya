@@ -5,6 +5,7 @@ const readline = require("readline");
 const util = require("util");
 const url =  require("url");
 const path = require("path");
+const events = require("events");
 
 function main(){
   var url = "http://www.ximalaya.com/48536908/album/4264862/" ;
@@ -33,7 +34,7 @@ function main(){
     }
 
   }
-  page.on("downloaded",function(){
+  page.once("downloaded",function(){
     analyzeSoundIds.call(this);
     var pagesRe =/<a[^>]*?class='pagingBar_page'[^>]*?>(\d+)<\/a>/gm; 
     var pageLink;
@@ -47,7 +48,7 @@ function main(){
     }
     for(var i = 2; i <= lastPage; i++){
       var p = new File(url + "?page=" + i);
-      p.on("downloaded",analyzeSoundIds);
+      p.once("downloaded",analyzeSoundIds);
       fsm.enqueue(p);
     }
   })
@@ -65,8 +66,9 @@ function File(url){
   this.speed = 0;
   this.content = "";
   this.state = "create";// create  enqueue  response  data  download convert converting finish
-  this.events = {};
+  events.EventEmitter.call(this);
 }
+util.inherits(File,events.EventEmitter);
 File.prototype.toString = function(){
   var result = "";
   switch(this.state){
@@ -125,7 +127,7 @@ File.prototype.download = function(){
         var buf = Buffer.concat(chunks,self.size);
         self.content = buf.toString();
       }
-      self.trigger("downloaded");
+      self.emit("downloaded");
     })
   })
 }
@@ -169,25 +171,6 @@ File.prototype.finish = function(){
     }
   }
   this.state = "finish";
-}
-File.prototype.on = function(type,handler){
-  var handlers;
-  handlers = this.events[type];
-  if(!handlers){ 
-    handlers = this.events[type] = [];
-  }
-  handlers.push(handler);
-}
-File.prototype.trigger = function(type){
-  var handers;
-  var self = this;
-  handers = this.events[type];
-  if(handers){
-    var args = Array.prototype.slice.call(arguments,1);
-    handers.forEach(function(handler){
-      handler.apply(self,args)
-    })
-  }
 }
 
 function StateMachine(){
