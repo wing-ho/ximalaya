@@ -34,7 +34,7 @@ function main(){
     }
 
   }
-  page.once("downloaded",function(){
+  page.on("downloaded",function(){
     analyzeSoundIds.call(this);
     var pagesRe =/<a[^>]*?class='pagingBar_page'[^>]*?>(\d+)<\/a>/gm; 
     var pageLink;
@@ -48,7 +48,7 @@ function main(){
     }
     for(var i = 2; i <= lastPage; i++){
       var p = new File(url + "?page=" + i);
-      p.once("downloaded",analyzeSoundIds);
+      p.on("downloaded",analyzeSoundIds);
       fsm.enqueue(p);
     }
   })
@@ -67,6 +67,11 @@ function File(url){
   this.content = "";
   this.state = "create";// create  enqueue  response  data  download convert converting finish
   events.EventEmitter.call(this);
+}
+File.mime_types = {
+  "audio/x-m4a":"m4a",
+  "text/html;charset=utf-8":"html",
+  "application/json;charset=utf-8":"json"
 }
 util.inherits(File,events.EventEmitter);
 File.prototype.toString = function(){
@@ -104,8 +109,7 @@ File.prototype.download = function(){
     self.state = "response";
     var chunks = [];
     self.size = res.headers["content-length"] || 0;
-    var contentType = res.headers["content-type"];
-    self.contentType = contentType.split(";")[0].split("/")[1]; 
+    self.contentType = res.headers["content-type"];
     if(self.isBinaryFile()){
       var writeStream = fs.createWriteStream(self.id);
     }
@@ -150,8 +154,11 @@ File.prototype.convert = function(){
     self.state = "finish";
   });
 }
-File.prototype.isBinaryFile =function(){
-  return /x-m4a/.test(this.contentType);
+File.prototype.isBinaryFile = function(){
+  return this.is("m4a"); 
+}
+File.prototype.is = function(type){
+  return File.mime_types[this.contentType] === type; 
 }
 File.prototype.transition = function(fsm){
   if(this.state === "create"){

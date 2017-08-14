@@ -1,0 +1,23 @@
+{
+  "name": "wing",
+  "version": "1.0.0",
+  "description": "喜马拉雅专辑批量下载爬虫",
+  "main": "index.js",
+  "scripts": {
+    "test": "node index.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wing-ho/ximalaya.git"
+  },
+  "keywords": [
+    "喜马拉雅",
+    "爬虫"
+  ],
+  "author": "wing",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/wing-ho/ximalaya/issues"
+  },
+  "homepage": "https://github.com/wing-ho/ximalaya#readme"
+}
