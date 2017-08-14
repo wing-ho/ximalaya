@@ -2,149 +2,142 @@ const http = require("http");
 const fs = require("fs");
 const spawn = require("child_process").spawn;
 const readline = require("readline");
+const util = require("util");
+const url =  require("url");
+const path = require("path");
 
 function main(){
-  var url = process.argv[1];
-  /* request = request.defaults({ */
-    // agent:false
-  /* }) */
-  // var fileinfo1 = new FileInfo("01","http://audio.xmcdn.com/group18/M06/AE/D7/wKgJJVe7B6fBZr00ABqiOS5YkyA154.m4a");
-  // var fileinfo2 = new FileInfo("02","http://audio.xmcdn.com/group19/M04/85/5A/wKgJK1eq6y7Bvy5wACuOG4X60uU067.m4a");
-  // var fileinfo1 = new FileInfo("01","http://localhost/01.m4a");
-  // var fileinfo2 = new FileInfo("02","http://localhost/01.m4a");
-  // var fileinfo3 = new FileInfo("03","http://localhost/01.m4a");
+  var url = "http://www.ximalaya.com/48536908/album/4264862/" ;
   var fsm = new StateMachine();
-  var page = new Page("http://www.ximalaya.com/48536908/album/4264862/");
-  // var sound = new Sound("15526502");
+  var page = new File(url);
   fsm.enqueue(page);
-  // fsm.enqueue(sound);
   fsm.start();
-  page.on("end",function(page){
-    console.log("this is the end",page.title)
-    var p = new Page("http://www.ximalaya.com/48536908/album/4264862?page=2")
-    fsm.enqueue(p)
+  function analyzeSoundIds(){
+    this.finish();
+    var soundsRe = /class="personal_body" sound_ids="(.*?)"/;
+    var match = soundsRe.exec(this.content);
+    if(match){
+      var sounds = match[1].split(",");
+      sounds.forEach(function(id){
+        var url = "http://www.ximalaya.com/tracks/" + id + ".json";
+        var sound = new File(url);
+        sound.on("downloaded",function(){
+          var track = JSON.parse(this.content);
+          var m4a = new File(track.play_path);
+          m4a.id = track.title + ".m4a";
+          fsm.enqueue(m4a)
+          this.finish();
+        })
+        fsm.enqueue(sound);
+      })
+    }
+
+  }
+  page.on("downloaded",function(){
+    analyzeSoundIds.call(this);
+    var pagesRe =/<a[^>]*?class='pagingBar_page'[^>]*?>(\d+)<\/a>/gm; 
+    var pageLink;
+    var pages = [];
+    var lastPage = 0;
+    while((pageLink = pagesRe.exec(this.content)) != null){
+      pages.push(pageLink[1]);
+    }
+    if(pages.length > 0){
+      lastPage = pages.pop();
+    }
+    for(var i = 2; i <= lastPage; i++){
+      var p = new File(url + "?page=" + i);
+      p.on("downloaded",analyzeSoundIds);
+      fsm.enqueue(p);
+    }
   })
   process.on('SIGINT', function(){
-    fsm.clean();
+    fsm.finish();
     process.exit(0);
   });
 }
-function Page(path){
-  this.path = path;
-  this.sounds = [];
-  this.state = 0;
-  this.events = {};
-}
-Page.prototype.download = function(){
-  var self = this;
-  self.state = 1;
-  http.get(self.path,function(res){
-    var chunks = [];
-    var size = 0;
-    res.on("data",function(chunk){
-      chunks.push(chunk);
-      size += chunk.length;
-    }).on("end",function(){
-      self.state = 2;
-      var buf = Buffer.concat(chunks,size);
-      var html = buf.toString();
-      var re = /class="personal_body" sound_ids="(.*?)"/;
-      var match = re.exec(html);
-      if(match){
-        self.sounds = match[1].split(",");
-        // console.log(self.sounds);
-        self.trigger("end",self);
-      }
-    })
-  })
-}
-Page.prototype.transition = function(fsm){
-  switch(this.state){
-    case 0:
-      this.download(fsm);
-      break;
-  }
-}
-Page.prototype.toString = function(){
-  return "";
-}
-Page.prototype.isEnd =function(){
-  return this.state === 7;
-}
-Page.prototype.clean = function(){}
-Page.prototype.on = function(type,handler){
-  var handlers;
-  handlers = this.events[type];
-  if(!handlers){ 
-    handlers = this.events[type] = [];
-  }
-  handlers.push(handler);
-}
-Page.prototype.trigger = function(type){
-  var handers;
-  var self = this;
-  handers = this.events[type];
-  if(handers){
-    var args = Array.prototype.slice.call(arguments,1);
-    handers.forEach(function(handler){
-      handler.apply(this,args)
-    })
-  }
-}
-
-function Sound(id){
-  this.id = id;
+function File(url){
+  this.url = url;
+  this.id = path.basename(url);
   this.size = 0;
   this.percent = 0;
   this.downloaded = 0;
   this.speed = 0;
-  this.time = "00:00:00.00";
-  this.state = 0;//1 create 2 response 3 downloading 4 m4a 5 start_convert 6 converting 7 mp3
+  this.content = "";
+  this.state = "create";// create  enqueue  response  data  download convert converting finish
+  this.events = {};
 }
-Sound.prototype.getPath = function(){
+File.prototype.toString = function(){
+  var result = "";
+  switch(this.state){
+    case "create":
+    case "enqueue":
+      result = util.format("%s开始下载！",this.id);
+      break;
+    case "data":
+      if(this.isBinaryFile()){
+        result = util.format("%s下载完成%d%",this.id,this.percent);
+      }
+      break;
+    case "downloaded":
+      result = util.format("%s下载完成!",this.id);
+      break;
+    case "convert":
+      result = util.format("%s准备转换为mp3!",this.id);
+      break;
+    case "converting":
+      result = util.format("%s转换用时%s",this.id,this.time);
+      break;
+    case "finish":
+      result = util.format("%s任务完成！",this.id);
+      break;
+  }
+  return result;
+}
+File.prototype.download = function(){
   var self = this;
-  self.state = 1;
-  var url = "http://www.ximalaya.com/tracks/" + self.id + ".json";
-  http.get(url,function(res){
+  self.state = "enqueue";
+  var options = url.parse(self.url);
+  http.get(options,function(res){
+    self.state = "response";
     var chunks = [];
-    var size = 0;
+    self.size = res.headers["content-length"] || 0;
+    var contentType = res.headers["content-type"];
+    self.contentType = contentType.split(";")[0].split("/")[1]; 
+    if(self.isBinaryFile()){
+      var writeStream = fs.createWriteStream(self.id);
+    }
     res.on("data",function(chunk){
-      chunks.push(chunk);
-      size += chunk.length;
-    }).on("end",function(){
-      self.state = 2;
-      var buf = Buffer.concat(chunks,size);
-      var sound = JSON.parse(buf.toString());
-      self.title = sound.title;
-      self.path = sound.play_path;
-    })
-  })
-}
-Sound.prototype.download = function(){
-  var self = this;
-  self.state = 3;
-  var writeStream = fs.createWriteStream(self.getFileName());
-  http.get(self.path,function(res){
-    self.state = 4;
-    self.size = res.headers["content-length"];
-    res.on("data",function(chunk){
-      self.state = 5;
+      self.state = "data";
       var len = chunk.length;
       self.downloaded += len;
       self.speed = Math.ceil(len / 1024);
-      self.percent = Math.ceil(self.downloaded / self.size * 100);
-      writeStream.write(chunk);
+      if(self.isBinaryFile()){
+        self.percent = Math.ceil(self.downloaded / self.size * 100);
+        writeStream.write(chunk);
+      }else{
+        chunks.push(chunk);
+      }
     }).on("end",function(){
-      self.state = 6;
+      self.state = "downloaded";
+      self.size = self.downloaded;
+      if(!self.isBinaryFile()){
+        var buf = Buffer.concat(chunks,self.size);
+        self.content = buf.toString();
+      }
+      self.trigger("downloaded");
     })
   })
 }
-Sound.prototype.convert = function(){
+File.prototype.convert = function(){
   var self = this;
-  self.state = 7;
-  var ffmpeg = spawn("ffmpeg",["-y","-i",self.getFileName(4),"-acodec","libmp3lame",self.getFileName()]);
+  self.state = "convert";
+  var basename = path.basename(self.id,".m4a"); 
+  self.id = basename +".mp3";
+  self.time = "00:00:00.00";
+  var ffmpeg = spawn("ffmpeg",["-y","-i",basename + ".m4a","-acodec","libmp3lame",self.id]);
   ffmpeg.stderr.on("data",function(chunk){
-    self.state = 8;
+    self.state = "converting";
     var msg = chunk.toString();
     var start = msg.indexOf("time=");
     var end = msg.indexOf(" bitrate");
@@ -152,59 +145,49 @@ Sound.prototype.convert = function(){
       self.time = msg.substring(start+5,end);
     }
   }).on("end",function(){
-    self.state = 9;
+    self.state = "finish";
   });
 }
-Sound.prototype.transition = function(){
-  switch(this.state){
-    case 0:
-      this.getPath();
-      break;
-    case 2:
-      this.download();
-      break;
-    case 6:
-      this.convert();
-      break;
+File.prototype.isBinaryFile =function(){
+  return /x-m4a/.test(this.contentType);
+}
+File.prototype.transition = function(fsm){
+  if(this.state === "create"){
+    this.download(fsm);
+  }else if(this.state === "downloaded" && this.isBinaryFile()){
+    this.convert();
   }
 }
-Sound.prototype.toString =  function(){
-  switch(this.state){
-    case 1:
-      return this.getFileName() + "本地文件创建成功！";
-    case 2:
-      return this.getFileName() + "开始下载！";
-    case 3:
-      return this.getFileName() + "下载完成" + this.percent + "%";
-    case 4:
-      return this.getFileName() + "下载完成！";
-    case 5:
-      return this.getFileName() + "准备转换为mp3!";
-    case 6:
-      return this.getFileName() + "转换用时" + this.time;
-    case 7:
-      return this.getFileName() + "转换完成！"
-  }
-}
-Sound.prototype.isEnd = function(){
-  return this.state == 7;
-}
-Sound.prototype.getFileName = function(state){
-  state = state || this.state;
-  switch(state){
-    case 1:
-    case 2:
-    case 3:
-    case 4:
-      return this.title + ".m4a";
-    case 5:
-    case 6:
-    case 7:
-      return this.title + ".mp3";
-  }
-}
-Sound.prototype.clean = function(){
 
+File.prototype.isFinish =function(){
+  return this.state === "finish";
+}
+File.prototype.finish = function(){
+  if(this.isBinaryFile()){
+    if("data" === this.state || "converting" === this.state){
+      fs.unlinkSync(this.id);
+    }
+  }
+  this.state = "finish";
+}
+File.prototype.on = function(type,handler){
+  var handlers;
+  handlers = this.events[type];
+  if(!handlers){ 
+    handlers = this.events[type] = [];
+  }
+  handlers.push(handler);
+}
+File.prototype.trigger = function(type){
+  var handers;
+  var self = this;
+  handers = this.events[type];
+  if(handers){
+    var args = Array.prototype.slice.call(arguments,1);
+    handers.forEach(function(handler){
+      handler.apply(self,args)
+    })
+  }
 }
 
 function StateMachine(){
@@ -214,7 +197,7 @@ function StateMachine(){
   this.cursorDx = 0;
   this.cursorDy = 0;
 }
-StateMachine.MAX_THREADS = 3;
+StateMachine.MAX_THREADS = 5;
 StateMachine.current_threads = 0;
 StateMachine.idle_threads = function(){
   return StateMachine.MAX_THREADS - StateMachine.current_threads;
@@ -245,9 +228,9 @@ StateMachine.prototype.transition = function(){
   var states = [],stdout = process.stdout;
   for(var i = 0; i < this.running.length; i++){
     var file = this.running[i];
-    file.transition(fsm);
+    file.transition();
     states.push(file.toString());
-    if(file.isEnd()){
+    if(file.isFinish()){
       this.running.splice(i,1);
       i--;
       StateMachine.current_threads--;
@@ -262,10 +245,10 @@ StateMachine.prototype.transition = function(){
   this.cursorDy = -1 * rec.height;
 }
 
-StateMachine.prototype.clean = function(){
+StateMachine.prototype.finish = function(){
   for(var i = 0;i < this.running.length; i++){
     var file = this.running[i];
-    file.clean();
+    file.finish();
   }
 }
 function getDisplayRectangle(str){
@@ -291,19 +274,4 @@ function getDisplayRectangle(str){
     height:height
   }
 }
- main();
-/*
-var url = "http://www.ximalaya.com/48536908/album/4264862/"
-http.get(url,function(res){
-  var chunks = [];
-  var size = 0;
-  console.log("header",res.headers);
-  res.on("data",function(chunk){
-    chunks.push(chunk);
-    size += chunk.length;
-  }).on("end",function(){
-    var buf = Buffer.concat(chunks,size);
-    console.log("end",size);
-  })
-})
-*/
+main();
