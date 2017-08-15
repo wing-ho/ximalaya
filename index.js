@@ -14,7 +14,6 @@ function main(){
   fsm.enqueue(page);
   fsm.start();
   function analyzeSoundIds(){
-    this.finish();
     var soundsRe = /class="personal_body" sound_ids="(.*?)"/;
     var match = soundsRe.exec(this.content);
     if(match){
@@ -27,16 +26,14 @@ function main(){
           var m4a = new File(track.play_path);
           m4a.id = track.title + ".m4a";
           fsm.enqueue(m4a)
-          this.finish();
         })
         fsm.enqueue(sound);
       })
     }
-
   }
   page.on("downloaded",function(){
     analyzeSoundIds.call(this);
-    var pagesRe =/<a[^>]*?class='pagingBar_page'[^>]*?>(\d+)<\/a>/gm; 
+    var pagesRe =/<a[^>]*?class='pagingBar_page'[^>]*?>(\d+)<\/a>/gm;
     var pageLink;
     var pages = [];
     var lastPage = 0;
@@ -65,13 +62,9 @@ function File(url){
   this.downloaded = 0;
   this.speed = 0;
   this.content = "";
+  this.contentType = "";
   this.state = "create";// create  enqueue  response  data  download convert converting finish
   events.EventEmitter.call(this);
-}
-File.mime_types = {
-  "audio/x-m4a":"m4a",
-  "text/html;charset=utf-8":"html",
-  "application/json;charset=utf-8":"json"
 }
 util.inherits(File,events.EventEmitter);
 File.prototype.toString = function(){
@@ -157,14 +150,30 @@ File.prototype.convert = function(){
 File.prototype.isBinaryFile = function(){
   return this.is("m4a"); 
 }
-File.prototype.is = function(type){
-  return File.mime_types[this.contentType] === type; 
+File.mime_types = {
+  "audio/x-m4a":"m4a",
+  "text/html":"html",
+  "application/json":"json"
+}
+File.prototype.extname = function(){
+  var mime = this.contentType.split(";")[0].toLowerCase();
+  var ext = File.mime_types[mime];
+  return ext;
+}
+File.prototype.is = function(extname){
+  var re = new RegExp(extname);
+  return re.test(this.extname()); 
 }
 File.prototype.transition = function(fsm){
   if(this.state === "create"){
     this.download(fsm);
-  }else if(this.state === "downloaded" && this.isBinaryFile()){
-    this.convert();
+  }else if(this.state ==="downloaded"){
+    if(this.is("m4a")){
+      this.convert();
+    }
+    if(this.is("html|json")){
+      this.finish();
+    }
   }
 }
 
