@@ -8,7 +8,12 @@ const path = require("path");
 const events = require("events");
 
 function main(){
-  var url = "http://www.ximalaya.com/48536908/album/4264862/" ;
+  var url = process.argv[2];
+  if(!url){
+    usage();
+    return;
+  }
+  //todo usage 函数
   var fsm = new StateMachine();
   var page = new File(url);
   fsm.enqueue(page);
@@ -18,15 +23,9 @@ function main(){
     var match = soundsRe.exec(this.content);
     if(match){
       var sounds = match[1].split(",");
-      sounds.forEach(function(id){
+      sounds.forEach(function(id,i){
         var url = "http://www.ximalaya.com/tracks/" + id + ".json";
         var sound = new File(url);
-        sound.on("downloaded",function(){
-          var track = JSON.parse(this.content);
-          var m4a = new File(track.play_path);
-          m4a.id = track.title + ".m4a";
-          fsm.enqueue(m4a)
-        })
         fsm.enqueue(sound);
       })
     }
@@ -54,9 +53,13 @@ function main(){
     process.exit(0);
   });
 }
+function usage(){
+  console.log("Usage: node index.js url")
+  console.log("Example: node index.js http://www.ximalaya.com/48536908/album/4264862/")
+}
 function File(url){
   this.url = url;
-  this.id = path.basename(url);
+  this.filename = path.basename(url);
   this.size = 0;
   this.percent = 0;
   this.downloaded = 0;
@@ -72,24 +75,24 @@ File.prototype.toString = function(){
   switch(this.state){
     case "create":
     case "enqueue":
-      result = util.format("%s开始下载！",this.id);
+      result = util.format("%s开始下载！",this.filename);
       break;
     case "data":
       if(this.isBinaryFile()){
-        result = util.format("%s下载完成%d%",this.id,this.percent);
+        result = util.format("%s下载完成%d%",this.filename,this.percent);
       }
       break;
     case "downloaded":
-      result = util.format("%s下载完成!",this.id);
+      result = util.format("%s下载完成!",this.filename);
       break;
     case "convert":
-      result = util.format("%s准备转换为mp3!",this.id);
+      result = util.format("%s准备转换为mp3!",this.filename);
       break;
     case "converting":
-      result = util.format("%s转换用时%s",this.id,this.time);
+      result = util.format("%s转换用时%s",this.filename,this.time);
       break;
     case "finish":
-      result = util.format("%s任务完成！",this.id);
+      result = util.format("%s任务完成！",this.filename);
       break;
   }
   return result;
@@ -104,7 +107,7 @@ File.prototype.download = function(){
     self.size = res.headers["content-length"] || 0;
     self.contentType = res.headers["content-type"];
     if(self.isBinaryFile()){
-      var writeStream = fs.createWriteStream(self.id);
+      var writeStream = fs.createWriteStream(self.filename);
     }
     res.on("data",function(chunk){
       self.state = "data";
@@ -128,13 +131,21 @@ File.prototype.download = function(){
     })
   })
 }
-File.prototype.convert = function(){
+
+File.prototype.getM4a = function(){
+  var track = JSON.parse(this.content);
+  this.url =  track.play_path;
+  this.filename = track.title + ".m4a";
+  this.download();
+}
+
+File.prototype.toMp3 = function(){
   var self = this;
   self.state = "convert";
-  var basename = path.basename(self.id,".m4a"); 
-  self.id = basename +".mp3";
+  var basename = path.basename(self.filename,".m4a"); 
+  self.filename = basename + ".mp3";
   self.time = "00:00:00.00";
-  var ffmpeg = spawn("ffmpeg",["-y","-i",basename + ".m4a","-acodec","libmp3lame",self.id]);
+  var ffmpeg = spawn("ffmpeg",["-y","-i",basename + ".m4a","-acodec","libmp3lame",self.filename]);
   ffmpeg.stderr.on("data",function(chunk){
     self.state = "converting";
     var msg = chunk.toString();
@@ -164,15 +175,20 @@ File.prototype.is = function(extname){
   var re = new RegExp(extname);
   return re.test(this.extname()); 
 }
-File.prototype.transition = function(fsm){
+File.prototype.transition = function(){
   if(this.state === "create"){
-    this.download(fsm);
+    this.download();
   }else if(this.state ==="downloaded"){
-    if(this.is("m4a")){
-      this.convert();
-    }
-    if(this.is("html|json")){
-      this.finish();
+    switch(this.extname()){
+      case "json":
+        this.getM4a();
+        break;
+      case "m4a":
+        this.toMp3();
+        break;
+      case "html":
+        this.finish();
+        break;
     }
   }
 }
@@ -183,7 +199,7 @@ File.prototype.isFinish =function(){
 File.prototype.finish = function(){
   if(this.isBinaryFile()){
     if("data" === this.state || "converting" === this.state){
-      fs.unlinkSync(this.id);
+      fs.unlinkSync(this.filename);
     }
   }
   this.state = "finish";
