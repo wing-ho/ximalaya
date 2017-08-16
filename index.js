@@ -13,7 +13,6 @@ function main(){
     usage();
     return;
   }
-  //todo usage 函数
   var fsm = new StateMachine();
   var page = new File(url);
   fsm.enqueue(page);

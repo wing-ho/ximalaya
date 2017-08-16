@@ -3,3 +3,4 @@ node_modules
 *.m4a
 *.mp3
 .vscode
+result/
