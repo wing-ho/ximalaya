@@ -1,3 +1,4 @@
+const https = require("https");
 const http = require("http");
 const fs = require("fs");
 const spawn = require("child_process").spawn;
@@ -6,45 +7,55 @@ const util = require("util");
 const url =  require("url");
 const path = require("path");
 const events = require("events");
+const cheerio = require('cheerio')
+
+const dest = process.argv[3] || path.resolve("download")
 
 function main(){
-  var url = process.argv[2];
+  const url = process.argv[2]
   if(!url){
     usage();
     return;
   }
+  if(!url.endsWith("/")){
+    url += "/"    
+  }
+  fs.exists(dest,function(exists){
+    if (!exists){
+      fs.mkdir(dest,()=>{})
+    }
+  })
   var fsm = new StateMachine();
   var page = new File(url);
   fsm.enqueue(page);
   fsm.start();
   function analyzeSoundIds(){
-    var soundsRe = /class="personal_body" sound_ids="(.*?)"/;
-    var match = soundsRe.exec(this.content);
-    if(match){
-      var sounds = match[1].split(",");
-      sounds.forEach(function(id,i){
-        var url = "http://www.ximalaya.com/tracks/" + id + ".json";
+    let $ = cheerio.load(this.content);
+    this.$ = $
+    let sound_list = []
+    $(".sound-list ._Vc a[href]").each(function(i,e){
+      let href = $(this).attr("href")      
+      let urls = href.split("/")      
+      sound_list.push(urls[urls.length-1])
+    })
+    
+    if(sound_list.length > 0){      
+      sound_list.forEach(function(id,i){        
+        // https://www.ximalaya.com/tracks/59688379.json
+        var url = "https://www.ximalaya.com/tracks/" + id + ".json";
         var sound = new File(url);
         fsm.enqueue(sound);
       })
     }
   }
   page.on("downloaded",function(){
-    analyzeSoundIds.call(this);
-    var pagesRe =/<a[^>]*?class='pagingBar_page'[^>]*?>(\d+)<\/a>/gm;
-    var pageLink;
-    var pages = [];
-    var lastPage = 0;
-    while((pageLink = pagesRe.exec(this.content)) != null){
-      pages.push(pageLink[1]);
-    }
-    if(pages.length > 0){
-      lastPage = pages.pop();
-    }
-    for(var i = 2; i <= lastPage; i++){
-      var p = new File(url + "?page=" + i);
+    analyzeSoundIds.call(this);    
+    const lastPage = this.$('.page-item .page-link span').last().html()
+       
+    for(var i = 2; i <= lastPage; i++){      
+      var p = new File(url + "p" + i + "/");
       p.on("downloaded",analyzeSoundIds);
-      fsm.enqueue(p);
+      fsm.enqueue(p);      
     }
   })
   process.on('SIGINT', function(){
@@ -53,8 +64,8 @@ function main(){
   });
 }
 function usage(){
-  console.log("Usage: node index.js url")
-  console.log("Example: node index.js http://www.ximalaya.com/48536908/album/4264862/")
+  console.log("Usage: node index.js url dest_folder?")
+  console.log("Example: node index.js https://www.ximalaya.com/gerenchengzhang/4264862/ 目录(可选)")
 }
 function File(url){
   this.url = url;
@@ -97,16 +108,30 @@ File.prototype.toString = function(){
   return result;
 }
 File.prototype.download = function(){
-  var self = this;
+  let self = this;
   self.state = "enqueue";
-  var options = url.parse(self.url);
-  http.get(options,function(res){
+  let request = http
+  if(self.url.startsWith("https")){
+    request = https
+  }
+  let options = url.parse(self.url);
+  
+  options = Object.assign(options,{
+    headers: {
+      // set vip cookie
+      // 'Cookie':"1&_token=186186830&F7BE8C60340N82EB86B994AA1929E774B3BCB8C3971A7EAB0DA438457CDCFCE2697B77728ED767M74B673D8FFBC77F_",
+      'User-Agent': "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/85.0.4183.83 Safari/537.36"
+
+    }
+  })
+// console.log(options)
+  request.get(options,function(res){
     self.state = "response";
     var chunks = [];
     self.size = res.headers["content-length"] || 0;
     self.contentType = res.headers["content-type"];
     if(self.isBinaryFile()){
-      var writeStream = fs.createWriteStream(self.filename);
+      var writeStream = fs.createWriteStream(path.join(dest,self.filename));
     }
     res.on("data",function(chunk){
       self.state = "data";
@@ -183,7 +208,9 @@ File.prototype.transition = function(){
         this.getM4a();
         break;
       case "m4a":
-        this.toMp3();
+        // use ffmpeg convert m4a to mp3
+        // this.toMp3();
+        this.finish();
         break;
       case "html":
         this.finish();
