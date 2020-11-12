@@ -33,7 +33,10 @@ function main(){
     let $ = cheerio.load(this.content);
     this.$ = $
     let sound_list = []
-    $(".sound-list ._Vc a[href]").each(function(i,e){
+    // if can't get id from the page
+    // open chrome dev panel -> console to have a test
+    // document.querySelectorAll(".sound-list .lF_ a[href]")
+    $(".sound-list .lF_ a[href]").each(function(i,e){
       let href = $(this).attr("href")      
       let urls = href.split("/")      
       sound_list.push(urls[urls.length-1])
