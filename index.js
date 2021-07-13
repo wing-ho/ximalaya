@@ -12,7 +12,7 @@ const cheerio = require('cheerio')
 const dest = process.argv[3] || path.resolve("download")
 
 function main(){
-  const url = process.argv[2]
+  let url = process.argv[2]
   if(!url){
     usage();
     return;
@@ -47,6 +47,7 @@ function main(){
         // https://www.ximalaya.com/tracks/59688379.json
         var url = "https://www.ximalaya.com/tracks/" + id + ".json";
         var sound = new File(url);
+        console.log(url);
         fsm.enqueue(sound);
       })
     }
