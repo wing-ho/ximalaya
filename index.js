@@ -35,8 +35,8 @@ function main(){
     let sound_list = []
     // if can't get id from the page
     // open chrome dev panel -> console to have a test
-    // document.querySelectorAll(".sound-list .lF_ a[href]")
-    $(".sound-list .lF_ a[href]").each(function(i,e){
+    // document.querySelectorAll(".sound-list .text a[href]")
+    $(".sound-list .text a[href]").each(function(i,e){
       let href = $(this).attr("href")      
       let urls = href.split("/")      
       sound_list.push(urls[urls.length-1])
@@ -45,7 +45,8 @@ function main(){
     if(sound_list.length > 0){      
       sound_list.forEach(function(id,i){        
         // https://www.ximalaya.com/tracks/59688379.json
-        var url = "https://www.ximalaya.com/tracks/" + id + ".json";
+        // var url = "https://www.ximalaya.com/tracks/" + id + ".json";        
+        let url = "https://www.ximalaya.com/revision/play/tracks?trackIds=" + id;
         var sound = new File(url);
         console.log(url);
         fsm.enqueue(sound);
@@ -161,9 +162,11 @@ File.prototype.download = function(){
 }
 
 File.prototype.getM4a = function(){
-  var track = JSON.parse(this.content);
-  this.url =  track.play_path;
-  this.filename = track.title + ".m4a";
+  var tracks = JSON.parse(this.content);  
+  let track = tracks.data.tracksForAudioPlay[0];
+  this.url = track.src  
+  // console.log(track.src)
+  this.filename = track.trackName + ".m4a";
   this.download();
 }
 
@@ -192,7 +195,7 @@ File.prototype.isBinaryFile = function(){
 File.mime_types = {
   "audio/x-m4a":"m4a",
   "text/html":"html",
-  "application/json":"json"
+  "text/plain":"json"
 }
 File.prototype.extname = function(){
   var mime = this.contentType.split(";")[0].toLowerCase();
@@ -280,14 +283,14 @@ StateMachine.prototype.transition = function(){
       i--;
       StateMachine.current_threads--;
     }
-  }
+  }  
   var content = states.join("\n");
   readline.moveCursor(stdout,this.cursorDx,this.cursorDy);
   readline.clearScreenDown(stdout);
   stdout.write(content);
   var rec = getDisplayRectangle(content);
   this.cursorDx = -1 * rec.width;
-  this.cursorDy = -1 * rec.height;
+  this.cursorDy = -1 * rec.height;  
 }
 
 StateMachine.prototype.finish = function(){
