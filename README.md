@@ -17,7 +17,5 @@ https://nodejs.org/en/
 命令行
 
 ```bash
-npm i
-
-node index.js https://www.ximalaya.com/gerenchengzhang/4264862/ 目录(可选)
+node index.js https://www.ximalaya.com/album/4264862 目录(可选)
 ```
