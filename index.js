@@ -1,12 +1,12 @@
-const https = require( "https");
-const http = require( "http");
-const fs = require( "fs");
-const  {spawn} = require( "child_process");
-const readline = require( "readline");
-const util = require( "util");
-const URL = require( "url");
+const https = require("https");
+const http = require("http");
+const fs = require("fs");
+const { spawn } = require("child_process");
+const readline = require("readline");
+const util = require("util");
+const URL = require("url");
 const path = require("path");
-const events =  require("events");
+const events = require("events");
 const { info } = require("console");
 
 const dest = process.argv[3] || path.resolve("download")
@@ -14,21 +14,21 @@ const dest = process.argv[3] || path.resolve("download")
 let fsm = null;
 let pagesize = 20;
 let pageId = 1;
-function getURL(albumId,pageId){
+function getURL(albumId, pageId) {
   let ts = Date.now();
-  return `https://mobile.ximalaya.com/mobile-album/album/page/ts-${ts}?ac=WIFI&device=android&isAsc=true&isQueryInvitationBrand=true&isVideoAsc=true&pre_page=0&source=3&supportWebp=true&albumId=${albumId}&pageId=${pageId}&pageSize=${pagesize}`;
+  return 'https://mobile.ximalaya.com/mobile-album/album/page/ts-' + ts + '?ac=WIFI&device=android&isAsc=true&isQueryInvitationBrand=true&isVideoAsc=true&pre_page=0&source=3&supportWebp=true&albumId=' + albumId + '&pageId=' + pageId + '&pageSize=' + pagesize;
 }
 
 function main() {
   let url = process.argv[2]
-  if(!url){
+  if (!url) {
     usage();
     return;
   }
-  
+
   let groups = url.match(/\/([0-9]+)/);
-  let albumId = groups[1]; 
-  url = getURL(albumId,pageId);
+  let albumId = groups[1];
+  url = getURL(albumId, pageId);
 
   fs.exists(dest, function (exists) {
     if (!exists) {
@@ -43,12 +43,12 @@ function main() {
   page.on("downloaded", function () {
     let resData = JSON.parse(this.content);
     let maxPageId = resData.data.tracks.maxPageId;
-    for (let pageId = 2; pageId <= maxPageId; pageId++) {      
-      var p = new File(getURL(albumId,pageId));            
+    for (let pageId = 2; pageId <= maxPageId; pageId++) {
+      var p = new File(getURL(albumId, pageId));
       fsm.enqueue(p);
     }
   })
-  
+
   process.on('SIGINT', function () {
     fsm.finish();
     process.exit(0);
@@ -59,22 +59,22 @@ function usage() {
   console.log("Example: node index.js https://www.ximalaya.com/album/4264862 目录(可选)")
 }
 function File(url) {
-  this.url = url;   
-  this.filename = path.basename(URL.parse(url).pathname);    
+  this.url = url;
+  this.filename = path.basename(URL.parse(url).pathname);
   this.size = 0;
   this.percent = 0;
   this.downloaded = 0;
   this.speed = 0;
-  this.content = "";  
+  this.content = "";
   this.contentType = "";
   this.state = "create";// create  enqueue  response  data  download convert converting finish
   events.EventEmitter.call(this);
 }
 util.inherits(File, events.EventEmitter);
-File.prototype.setTitle = function(title){ 
+File.prototype.setTitle = function (title) {
   let extname = path.extname(this.url)
-  if(extname != ""){    
-    this.filename = title.replace(/[\/:*?"<>|]/g,"") +"."+ extname; 
+  if (extname != "") {
+    this.filename = title.replace(/[\/:*?"<>|]/g, "") + "." + extname;
   }
 }
 File.prototype.toString = function () {
@@ -128,13 +128,14 @@ File.prototype.download = function () {
     self.contentType = res.headers["content-type"];
     if (res.statusCode == 301) {
       self.url = res.req.protocol + "//" + res.req.host + res.headers.location;
+      self.state = "create";
       return;
     }
 
     if (self.isBinaryFile()) {
       // use title as filename
       // self.filename = self.title.replace(/[\/:*?"<>|]/g,"") +"."+ self.extname();
-      var writeStream = fs.createWriteStream(path.join(dest,self.filename));      
+      var writeStream = fs.createWriteStream(path.join(dest, self.filename));
     }
     res.on("data", function (chunk) {
       self.state = "data";
@@ -159,12 +160,12 @@ File.prototype.download = function () {
   })
 }
 
-File.prototype.getMediaFile = function () {  
-  let resData = JSON.parse(this.content);  
-  let tracks = resData.data.tracks.list;  
-  for(let i = 0; i < tracks.length; i++){
+File.prototype.getMediaFile = function () {
+  let resData = JSON.parse(this.content);
+  let tracks = resData.data.tracks.list;
+  for (let i = 0; i < tracks.length; i++) {
     let track = new File(tracks[i].playUrl64)
-    track.setTitle(tracks[i].title);   
+    track.setTitle(tracks[i].title);
     fsm.enqueue(track);
   }
 }
@@ -212,13 +213,13 @@ File.prototype.transition = function () {
   } else if (this.state === "downloaded") {
     switch (this.extname()) {
       case "json":
-        this.getMediaFile();        
+        this.getMediaFile();
         this.finish();
-        break;      
+        break;
       case "m4a":
-        // use ffmpeg convert m4a to mp3
-        // this.toMp3();
-        // break;
+      // use ffmpeg convert m4a to mp3
+      // this.toMp3();
+      // break;
       case "mp3":
         this.finish();
         break;
@@ -293,7 +294,7 @@ StateMachine.prototype.transition = function () {
   stdout.write(content);
   var rec = getDisplayRectangle(content);
   this.cursorDx = -1 * rec.width;
-  this.cursorDy = -1 * rec.height;  
+  this.cursorDy = -1 * rec.height;
 }
 
 StateMachine.prototype.finish = function () {
