@@ -14,9 +14,9 @@ const dest = process.argv[3] || path.resolve("download")
 let fsm = null;
 let pagesize = 20;
 let pageId = 1;
-function getURL(albumId, pageId) {
+function getURL(albumId, pageId) {  
   let ts = Date.now();
-  return 'https://mobile.ximalaya.com/mobile-album/album/page/ts-' + ts + '?ac=WIFI&device=android&isAsc=true&isQueryInvitationBrand=true&isVideoAsc=true&pre_page=0&source=3&supportWebp=true&albumId=' + albumId + '&pageId=' + pageId + '&pageSize=' + pagesize;
+  return "https://mobile.ximalaya.com/mobile/v1/album/track/ts-"+ts+"?albumId="+albumId+"&device=android&isAsc=true&isQueryInvitationBrand=true&pageId="+pageId+"&pageSize="+pagesize+"&pre_page=0"
 }
 
 function main() {
@@ -40,11 +40,12 @@ function main() {
   fsm.enqueue(page);
   fsm.start();
 
-  page.on("downloaded", function () {
-    let resData = JSON.parse(this.content);
-    let maxPageId = resData.data.tracks.maxPageId;
+  page.on("downloaded", function () {    
+    let resData = JSON.parse(this.content);    
+    let maxPageId = resData.data.maxPageId;    
     for (let pageId = 2; pageId <= maxPageId; pageId++) {
-      var p = new File(getURL(albumId, pageId));
+      let url = getURL(albumId, pageId)      
+      var p = new File(url);
       fsm.enqueue(p);
     }
   })
@@ -74,7 +75,7 @@ util.inherits(File, events.EventEmitter);
 File.prototype.setTitle = function (title) {
   let extname = path.extname(this.url)
   if (extname != "") {
-    this.filename = title.replace(/[\/:*?"<>|]/g, "") + "." + extname;
+    this.filename = title.replace(/[\/:*?"<>|]/g, "") + extname;
   }
 }
 File.prototype.toString = function () {
@@ -132,7 +133,7 @@ File.prototype.download = function () {
       return;
     }
 
-    if (self.isBinaryFile()) {
+    if (self.isBinaryFile()) {    
       // use title as filename
       // self.filename = self.title.replace(/[\/:*?"<>|]/g,"") +"."+ self.extname();
       var writeStream = fs.createWriteStream(path.join(dest, self.filename));
@@ -160,12 +161,12 @@ File.prototype.download = function () {
   })
 }
 
-File.prototype.getMediaFile = function () {
-  let resData = JSON.parse(this.content);
-  let tracks = resData.data.tracks.list;
+File.prototype.getMediaFile = function () {  
+  let resData = JSON.parse(this.content);  
+  let tracks = resData.data.list;
   for (let i = 0; i < tracks.length; i++) {
     let track = new File(tracks[i].playUrl64)
-    track.setTitle(tracks[i].title);
+    track.setTitle(tracks[i].title);    
     fsm.enqueue(track);
   }
 }
@@ -190,7 +191,7 @@ File.prototype.toMp3 = function () {
   });
 }
 File.prototype.isBinaryFile = function () {
-  return this.is("m4a") || this.is("mp3");
+ return this.is("m4a") || this.is("mp3");
 }
 File.mime_types = {
   "audio/mpeg": "mp3",
