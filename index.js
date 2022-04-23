@@ -14,9 +14,10 @@ const dest = process.argv[3] || path.resolve("download")
 let fsm = null;
 let pagesize = 20;
 let pageId = 1;
+let isAsc = true;
 function getURL(albumId, pageId) {  
   let ts = Date.now();
-  return "https://mobile.ximalaya.com/mobile/v1/album/track/ts-"+ts+"?albumId="+albumId+"&device=android&isAsc=true&isQueryInvitationBrand=true&pageId="+pageId+"&pageSize="+pagesize+"&pre_page=0"
+  return "https://mobile.ximalaya.com/mobile/v1/album/track/ts-"+ts+"?albumId="+albumId+"&device=android&isAsc="+isAsc+"&isQueryInvitationBrand=true&pageId="+pageId+"&pageSize="+pagesize+"&pre_page=0"
 }
 
 function main() {
@@ -164,9 +165,14 @@ File.prototype.download = function () {
 File.prototype.getMediaFile = function () {  
   let resData = JSON.parse(this.content);  
   let tracks = resData.data.list;
+  let total = resData.data.totalCount;
+  let pageId = resData.data.pageId;
+  let pageSize = resData.data.pageSize;
+  let padlen = String(total).length;
   for (let i = 0; i < tracks.length; i++) {
+    let index = (pageId - 1) * pageSize + i + 1
     let track = new File(tracks[i].playUrl64)
-    track.setTitle(tracks[i].title);    
+    track.setTitle(String(index).padStart(padlen,"0") +"-"+ tracks[i].title);    
     fsm.enqueue(track);
   }
 }
