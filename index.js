@@ -1,58 +1,104 @@
 const https = require("https");
 const http = require("http");
-const fs = require("fs");
+const { access, accessSync, mkdirSync, createWriteStream, unlinkSync, exists } = require("fs");
 const { spawn } = require("child_process");
 const readline = require("readline");
 const util = require("util");
-const URL = require("url");
+const URL = require('url');
 const path = require("path");
-const events = require("events");
+const EventEmitter = require("events");
+var CryptoJS = require("crypto-js");
 const { info } = require("console");
 
 const dest = process.argv[3] || path.resolve("download")
 
-let fsm = null;
+let queue;
 let pagesize = 20;
 let pageId = 1;
-let isAsc = true;
-function getURL(albumId, pageId) {  
+let quality = 24
+let isAsc = false;
+let albumOrTrack = "album"
+
+function getTrackBaseInfo(trackId) {
   let ts = Date.now();
-  return "https://mobile.ximalaya.com/mobile/v1/album/track/ts-"+ts+"?albumId="+albumId+"&device=android&isAsc="+isAsc+"&isQueryInvitationBrand=true&pageId="+pageId+"&pageSize="+pagesize+"&pre_page=0"
+  return "https://mobile.ximalaya.com/mobile-playpage/track/v3/baseInfo/" + ts + "?device=web&trackId=" + trackId;
+}
+
+function getAlbumInfo(albumId, pageId) {
+  let ts = Date.now();
+  // return "https://mobile.ximalaya.com/mobile/v1/album/track/ts-" + ts + "?albumId=" + albumId + "&device=web&isAsc=true&pageId=" + pageId + "&pageSize="+pagesize+"&pre_page=0"
+  return "https://mobile.ximalaya.com/mobile/v1/album/track/ts-" + ts + "?albumId=" + albumId + "&device=android&isAsc=" + isAsc + "&isQueryInvitationBrand=true&pageId=" + pageId + "&pageSize=" + pagesize + "&pre_page=0"
+}
+
+// 存在只有m4a格式，没有mp3格式的情况
+function getURLFromEncodeDataList(playUrlList, quality) {
+  let qualities = ["64", "128", "32", "24"]
+  // let types = ["M4A","MP3"]
+  let types = ["MP3", "M4A","AAC"]
+  let item
+  loop:
+  for (let i = 0; i < types.length; i++) {
+    for (let j = 0; j < qualities.length; j++) {
+      let type = types[i].concat('_').concat(qualities[j])
+      for (let k = 0; k < playUrlList.length; k++) {
+        item = playUrlList[k]
+        if (item.type == type) {
+          break loop;
+        }
+      }
+    }
+  }
+  return CryptoJS.AES.decrypt({ ciphertext: CryptoJS.enc.Base64url.parse(item.url) },
+    CryptoJS.enc.Hex.parse("aaad3e4fd540b0f79dca95606e72bf93"),
+    { mode: CryptoJS.mode.ECB, padding: CryptoJS.pad.Pkcs7 }).toString(CryptoJS.enc.Utf8);
 }
 
 function main() {
   let url = process.argv[2]
   if (!url) {
+    url = "https://www.ximalaya.com/album/19226647"
     usage();
     return;
   }
-
-  let groups = url.match(/\/([0-9]+)/);
-  let albumId = groups[1];
-  url = getURL(albumId, pageId);
-
-  fs.exists(dest, function (exists) {
-    if (!exists) {
-      fs.mkdir(dest, () => { })
+  access(dest, (err) => {
+    if (err) {
+      mkdirSync(dest)
     }
   })
-  fsm = new StateMachine();
-  var page = new File(url);
-  fsm.enqueue(page);
-  fsm.start();
+  queue = new Queue()
+  let albumId;
+  let trackId;
+  let groups = url.match(/(album|sound)\/([0-9]+)/);
+  albumOrTrack = groups[1];
+  if (albumOrTrack == "sound") {
+    trackId = groups[2]
+    url = getTrackBaseInfo(trackId)
+    let file = new File(url)
+    file.type = "track"
+    queue.enqueue(file);
+  } else {
+    albumId = groups[2]
+    url = getAlbumInfo(albumId, pageId)
+    let page = new File(url)
+    page.type = "page"
+    queue.enqueue(page);
+    page.on("downloaded", function () {
+      let resData = JSON.parse(this.content);
+      if ("data" in resData && "maxPageId" in resData.data) {
+        let maxPageId = resData.data.maxPageId;
+        for (let pageId = 2; pageId <= maxPageId; pageId++) {
+          let url = getAlbumInfo(albumId, pageId)
+          var page = new File(url);
+          queue.enqueue(page);
+        }
+      }
+    })
+  }
 
-  page.on("downloaded", function () {    
-    let resData = JSON.parse(this.content);    
-    let maxPageId = resData.data.maxPageId;    
-    for (let pageId = 2; pageId <= maxPageId; pageId++) {
-      let url = getURL(albumId, pageId)      
-      var p = new File(url);
-      fsm.enqueue(p);
-    }
-  })
+  queue.showProcess();
 
   process.on('SIGINT', function () {
-    fsm.finish();
+    queue.end();
     process.exit(0);
   });
 }
@@ -60,277 +106,267 @@ function usage() {
   console.log("Usage: node index.js url dest_folder?")
   console.log("Example: node index.js https://www.ximalaya.com/album/4264862 目录(可选)")
 }
-function File(url) {
-  this.url = url;
-  this.filename = path.basename(URL.parse(url).pathname);
-  this.size = 0;
-  this.percent = 0;
-  this.downloaded = 0;
-  this.speed = 0;
-  this.content = "";
-  this.contentType = "";
-  this.state = "create";// create  enqueue  response  data  download convert converting finish
-  events.EventEmitter.call(this);
-}
-util.inherits(File, events.EventEmitter);
-File.prototype.setTitle = function (title) {
-  let extname = path.extname(this.url)
-  if (extname != "") {
-    this.filename = title.replace(/[\/:*?"<>|]/g, "") + extname;
+
+class File extends EventEmitter {
+  constructor(url) {
+    super()
+    this.url = url
+    this.filename = path.basename(new URL.URL(url).pathname);
+    this.size = 0;
+    this.speed = 0;
+    this.downloaded = 0
+    this.content = "";
+    this.contentType = "";
+    this.type = "page"; // page track mp3 
+    this.state = "create";// create  enqueue  response  data downloeaded 
   }
-}
-File.prototype.toString = function () {
-  var result = "";
-  switch (this.state) {
-    case "create":
-    case "enqueue":
-      result = util.format("%s开始下载！", this.filename);
-      break;
-    case "data":
-      if (this.isBinaryFile()) {
+  get percent() {
+    return Math.ceil(this.downloaded / this.size * 100);
+  }
+  set title(title) {
+    let extname = path.extname(this.filename)
+    if (extname != "") {
+      this.filename = title.replace(/[\/:*?"<>|]/g, "") + extname
+      this.path = path.join(dest, this.filename)
+    }
+  }
+  isBinaryFile() {
+    return this.type == "mp3"
+  }
+  toString() {
+    let result = "";
+    switch (this.state) {
+      case "create":
+      case "enqueue":
+        result = util.format("%s开始下载！", this.filename);
+        break;
+      case "data":
         result = util.format("%s下载完成%d%", this.filename, this.percent);
-      }
-      break;
-    case "downloaded":
-      result = util.format("%s下载完成!", this.filename);
-      break;
-    case "convert":
-      result = util.format("%s准备转换为mp3!", this.filename);
-      break;
-    case "converting":
-      result = util.format("%s转换用时%s", this.filename, this.time);
-      break;
-    case "finish":
-      result = util.format("%s任务完成！", this.filename);
-      break;
+        break;
+      case "downloaded":
+        result = util.format("%s下载已完成!", this.filename);
+        break;
+    }
+    return result;
   }
-  return result;
-}
-File.prototype.download = function () {
-  let self = this;
-  self.state = "enqueue";
-  let request = http
-  if (self.url.startsWith("https")) {
-    request = https
-  }
-  let options = URL.parse(self.url);
-
-  options = Object.assign(options, {
-    headers: {
-      // set vip cookie
-      // 'Cookie':"1&_token=186186830&F7BE8C60340N82EB86B994AA1929E774B3BCB8C3971A7EAB0DA438457CDCFCE2697B77728ED767M74B673D8FFBC77F_",
-      'User-Agent': "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36"
-
-    }
-  })
-  request.get(options, function (res) {
-    self.state = "response";
-    var chunks = [];
-    self.size = res.headers["content-length"] || 0;
-    self.contentType = res.headers["content-type"];
-    if (res.statusCode == 301) {
-      self.url = res.req.protocol + "//" + res.req.host + res.headers.location;
-      self.state = "create";
-      return;
+  download() {
+    this.state = "enqueue"
+    let request = http
+    if (this.url.startsWith("https")) {
+      request = https
     }
 
-    if (self.isBinaryFile()) {    
-      // use title as filename
-      // self.filename = self.title.replace(/[\/:*?"<>|]/g,"") +"."+ self.extname();
-      var writeStream = fs.createWriteStream(path.join(dest, self.filename));
-    }
-    res.on("data", function (chunk) {
-      self.state = "data";
-      var len = chunk.length;
-      self.downloaded += len;
-      self.speed = Math.ceil(len / 1024);
-      if (self.isBinaryFile()) {
-        self.percent = Math.ceil(self.downloaded / self.size * 100);
-        writeStream.write(chunk);
-      } else {
-        chunks.push(chunk);
+    let options = URL.parse(this.url)
+    options = Object.assign(options, {
+      headers: {
+        // set vip cookie
+        // 'Cookie':"1&_token=186186830&F7BE8C60340N82EB86B994AA1929E774B3BCB8C3971A7EAB0DA438457CDCFCE2697B77728ED767M74B673D8FFBC77F_",
+        'User-Agent': "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36"
       }
-    }).on("end", function () {
-      self.state = "downloaded";
-      self.size = self.downloaded;
-      if (!self.isBinaryFile()) {
-        var buf = Buffer.concat(chunks, self.size);
-        self.content = buf.toString();
-      }
-      self.emit("downloaded");
     })
-  })
-}
-
-File.prototype.getMediaFile = function () {  
-  let resData = JSON.parse(this.content);  
-  let tracks = resData.data.list;
-  let total = resData.data.totalCount;
-  let pageId = resData.data.pageId;
-  let pageSize = resData.data.pageSize;
-  let padlen = String(total).length;
-  for (let i = 0; i < tracks.length; i++) {
-    let index = (pageId - 1) * pageSize + i + 1
-    let track = new File(tracks[i].playUrl64)
-    track.setTitle(String(index).padStart(padlen,"0") +"-"+ tracks[i].title);    
-    fsm.enqueue(track);
-  }
-}
-
-File.prototype.toMp3 = function () {
-  var self = this;
-  self.state = "convert";
-  var basename = path.basename(self.filename, ".m4a");
-  self.filename = basename + ".mp3";
-  self.time = "00:00:00.00";
-  var ffmpeg = spawn("ffmpeg", ["-y", "-i", basename + ".m4a", "-acodec", "libmp3lame", self.filename]);
-  ffmpeg.stderr.on("data", function (chunk) {
-    self.state = "converting";
-    var msg = chunk.toString();
-    var start = msg.indexOf("time=");
-    var end = msg.indexOf(" bitrate");
-    if (start > -1 && end > -1) {
-      self.time = msg.substring(start + 5, end);
-    }
-  }).on("end", function () {
-    self.state = "finish";
-  });
-}
-File.prototype.isBinaryFile = function () {
- return this.is("m4a") || this.is("mp3");
-}
-File.mime_types = {
-  "audio/mpeg": "mp3",
-  "audio/x-m4a": "m4a",
-  "text/html": "html",
-  "text/plain": "json"
-}
-File.prototype.extname = function () {
-  var mime = this.contentType.split(";")[0].toLowerCase();
-  var ext = File.mime_types[mime];
-  return ext;
-}
-File.prototype.is = function (extname) {
-  var re = new RegExp(extname);
-  return re.test(this.extname());
-}
-File.prototype.transition = function () {
-  if (this.state === "create") {
-    this.download();
-  } else if (this.state === "downloaded") {
-    switch (this.extname()) {
-      case "json":
-        this.getMediaFile();
-        this.finish();
-        break;
-      case "m4a":
-      // use ffmpeg convert m4a to mp3
-      // this.toMp3();
-      // break;
-      case "mp3":
-        this.finish();
-        break;
-      case "html":
-        this.finish();
-        break;
-    }
-  }
-}
-
-File.prototype.isFinish = function () {
-  return this.state === "finish";
-}
-File.prototype.finish = function () {
-  if (this.isBinaryFile()) {
-    if ("data" === this.state || "converting" === this.state) {
-      fs.unlinkSync(this.filename);
-    }
-  }
-  this.state = "finish";
-}
-
-function StateMachine() {
-  this.queue = [];
-  this.running = [];
-  this.timer = 0;
-  this.cursorDx = 0;
-  this.cursorDy = 0;
-}
-StateMachine.MAX_THREADS = 5;
-StateMachine.current_threads = 0;
-StateMachine.idle_threads = function () {
-  return StateMachine.MAX_THREADS - StateMachine.current_threads;
-}
-
-StateMachine.prototype.start = function () {
-  var self = this;
-  this.timer = setInterval(function () {
-    self.dequeue();
-    if (self.queue.length === 0 && self.running.length === 0) {
-      clearInterval(self.timer);
-    }
-  }, 200);
-}
-StateMachine.prototype.enqueue = function (file) {
-  this.queue.push(file);
-}
-StateMachine.prototype.dequeue = function () {
-  var len = StateMachine.idle_threads();
-  for (var i = 0; i < len && this.queue.length > 0; i++) {
-    var file = this.queue.shift();
-    StateMachine.current_threads++;
-    this.running.push(file);
-  }
-  this.transition();
-}
-StateMachine.prototype.transition = function () {
-  var states = [], stdout = process.stdout;
-  for (var i = 0; i < this.running.length; i++) {
-    var file = this.running[i];
-    file.transition();
-    states.push(file.toString());
-    if (file.isFinish()) {
-      this.running.splice(i, 1);
-      i--;
-      StateMachine.current_threads--;
-    }
-  }
-  var content = states.join("\n");
-  readline.moveCursor(stdout, this.cursorDx, this.cursorDy);
-  readline.clearScreenDown(stdout);
-  stdout.write(content);
-  var rec = getDisplayRectangle(content);
-  this.cursorDx = -1 * rec.width;
-  this.cursorDy = -1 * rec.height;
-}
-
-StateMachine.prototype.finish = function () {
-  for (var i = 0; i < this.running.length; i++) {
-    var file = this.running[i];
-    file.finish();
-  }
-}
-function getDisplayRectangle(str) {
-  var width = 0, height = 0, maxWidth = 0, len = str.length, charCode = -1;
-  for (var i = 0; i < len; i++) {
-    charCode = str.charCodeAt(i);
-    if (charCode === 10) {
-      if (width > maxWidth) {
-        maxWidth = width;
+    request.get(options, (res) => {
+      this.state = "response";
+      var chunks = [];
+      this.size = res.headers["content-length"] || 0;
+      this.contentType = res.headers["content-type"];
+      if (res.statusCode == 301) {
+        this.url = res.req.protocol + "//" + res.req.host + res.headers.location;
+        this.state = "create";
+        return
       }
-      height += Math.floor(width / process.stdout.columns);
-      width = 0;
-      height++;
-    }
-    if (charCode >= 0 && charCode <= 255) {
-      width += 1;
-    } else {
-      width += 2;
+
+      if (this.isBinaryFile()) {
+        try {
+          accessSync(this.path)
+          this.state = "end"
+          queue.dequeue(this)
+          return
+        } catch (e) {
+          this.writeStream = createWriteStream(this.path);
+        }
+      }
+
+      res.on("data", (chunk) => {
+        this.state = "data";
+        let len = chunk.length;
+        this.downloaded += len;
+        this.speed = Math.ceil(len / 1024);
+        if (this.writeStream) {
+          this.writeStream.write(chunk);
+        } else {
+          chunks.push(chunk);
+        }
+      }).on("end", () => {
+        this.state = "downloaded";
+        this.size = this.downloaded;
+        if (!this.writeStream) {
+          var buf = Buffer.concat(chunks, this.size);
+          this.content = buf.toString();
+        }
+        this.emit("downloaded");
+        this.onDownloaded()
+        queue.dequeue()
+      })
+    })
+  }
+
+  getTrack() {
+    let resData = JSON.parse(this.content);
+    if ("data" in resData && "list" in resData.data) {
+      let tracks = resData.data.list;
+      let total = resData.data.totalCount;
+      let pageId = resData.data.pageId;
+      let pageSize = resData.data.pageSize;
+      let padlen = String(total).length;
+      for (let i = 0; i < tracks.length; i++) {
+        let track = tracks[i]
+        let index = String((pageId - 1) * pageSize + i + 1).padStart(padlen, '0') + "-"
+        // 如果音频的标题自带编号，则取消下一行注释，使用标题自带的编号
+        // index = ""
+        if (track.isPaid) {
+          let url = getTrackBaseInfo(track.trackId)
+          let payTrack = new File(url)
+          payTrack.type = "track"
+          payTrack.index = index
+          queue.enqueue(payTrack);
+        } else {
+          let mp3 = new File(track.playUrl64)
+          mp3.type = "mp3"
+          mp3.title = index + track.title;
+          queue.enqueue(mp3);
+        }
+      }
     }
   }
-  return {
-    width: maxWidth || width,
-    height: height
+
+  getMediaFile() {
+    let resData = JSON.parse(this.content);
+    if ("trackInfo" in resData && "playUrlList" in resData.trackInfo) {
+      let track = resData.trackInfo
+      let url = getURLFromEncodeDataList(track.playUrlList, quality)
+      let mp3 = new File(url);
+      mp3.type = "mp3"
+      mp3.title = this.index + track.title
+      queue.enqueue(mp3);
+    }
+  }
+  onDownloaded() {
+    switch (this.type) {
+      case "page":
+        this.getTrack();
+        this.end()
+        break;
+      case "track":
+        this.getMediaFile();
+        this.end()
+        break;
+      case "mp3":
+        this.end()
+        break;
+    }
+  }
+
+  get isEnd() {
+    return this.state === "end";
+  }
+  end() {
+    if (this.type == "mp3" && this.state == "data") {
+      unlinkSync(this.path);
+    }
+    this.state = "end";
+  }
+
+}
+class Queue {
+  MAX_THREADS = 5;
+  current_threads = 0
+  get idle_threads() {
+    return this.MAX_THREADS - this.current_threads;
+  }
+  constructor() {
+    this.queue = [];
+    this.timer = 0;
+    this.head = 0
+    this.tail = 0;
+    this.cursorDx = 0;
+    this.cursorDy = 0;
+  }
+
+  showProcess() {
+    this.timer = setInterval(() => {
+      this.toString();
+      if (this.head == this.tail) {
+        clearInterval(this.timer);
+      }
+    }, 200);
+  }
+  enqueue(file) {
+    this.queue.push(file)
+    while (this.tail < this.queue.length && this.idle_threads > 0) {
+      this.queue[this.tail].download()
+      this.tail++
+      this.current_threads++
+    }
+  }
+  dequeue() {
+    while (this.head < this.tail) {
+      if (!this.queue[this.head].isEnd) {
+        break
+      }
+      this.head++
+    }
+    if (this.tail < this.queue.length) {
+      this.queue[this.tail].download()
+      this.tail++
+    }
+  }
+  toString() {
+    var content = "", stdout = process.stdout;
+    for (var i = this.head; i < this.tail; i++) {
+      var file = this.queue[i];
+      if (!file.isEnd) {
+        content += file.toString()
+        if (i + 1 < this.tail) {
+          content += "\n"
+        }
+      }
+    }
+    readline.moveCursor(stdout, this.cursorDx, this.cursorDy);
+    readline.clearScreenDown(stdout);
+    stdout.write(content);
+    var rec = this.getDisplayRectangle(content);
+    this.cursorDx = -1 * rec.width;
+    this.cursorDy = -1 * rec.height;
+  }
+
+  end() {
+    for (var i = this.head; i < this.tail; i++) {
+      var file = this.queue[i];
+      file.end();
+    }
+  }
+  getDisplayRectangle(str) {
+    var width = 0, height = 0, maxWidth = 0, len = str.length, charCode = -1;
+    for (var i = 0; i < len; i++) {
+      charCode = str.charCodeAt(i);
+      if (charCode === 10) {
+        if (width > maxWidth) {
+          maxWidth = width;
+        }
+        height += Math.floor(width / process.stdout.columns);
+        width = 0;
+        height++;
+      }
+      if (charCode >= 0 && charCode <= 255) {
+        width += 1;
+      } else {
+        width += 2;
+      }
+    }
+    return {
+      width: maxWidth || width,
+      height: height
+    }
   }
 }
-main();
+main()
