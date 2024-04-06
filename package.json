@@ -19,5 +19,8 @@
   "bugs": {
     "url": "https://github.com/wing-ho/ximalaya/issues"
   },
-  "homepage": "https://github.com/wing-ho/ximalaya#readme"
+  "homepage": "https://github.com/wing-ho/ximalaya#readme",
+  "dependencies": {
+    "crypto-js": "^4.2.0"
+  }
 }
